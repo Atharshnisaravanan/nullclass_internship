@@ -1,75 +1,55 @@
 const express = require('express');
 const router = express.Router();
-const User = require('../models/User');
-const nodemailer = require('nodemailer');
+const mongoose = require('mongoose');
 
-// Define available plans
-const plans = [
-  { name: 'Free', timeLimit: 5, cost: 0 },
-  { name: 'Bronze', timeLimit: 7, cost: 10 },
-  { name: 'Silver', timeLimit: 10, cost: 50 },
-  { name: 'Gold', timeLimit: -1, cost: 100 } // -1 for unlimited
-];
-
-// GET all available plans
-router.get('/plans', (req, res) => {
-  return res.json(plans);
+// Plan Schema
+const planSchema = new mongoose.Schema({
+  userId: { type: String, required: true },
+  planName: { type: String, required: true },
+  price: { type: Number, required: true },
+  duration: { type: Number, required: true }, // in days
+  startDate: { type: Date, default: Date.now },
+  endDate: { type: Date }
 });
 
-// POST upgrade plan
-router.post('/upgrade', async (req, res) => {
+const Plan = mongoose.model('Plan', planSchema);
+
+// Subscribe to a plan
+router.post('/subscribe', async (req, res) => {
   try {
-    const { email, newPlan } = req.body;
+    const { userId, planName, price, duration } = req.body;
 
-    // Validate request body
-    if (!email || !newPlan) {
-      return res.status(400).json({ message: 'Email and newPlan are required.' });
+    if (!userId || !planName || !price || !duration) {
+      return res.status(400).json({ message: 'All fields are required' });
     }
 
-    const selectedPlan = plans.find(plan => plan.name === newPlan);
+    const endDate = new Date();
+    endDate.setDate(endDate.getDate() + duration);
 
-    if (!selectedPlan) {
-      return res.status(400).json({ message: 'Invalid plan selected.' });
-    }
-
-    // Find or create the user
-    let user = await User.findOne({ email });
-
-    if (!user) {
-      user = new User({ email });
-    }
-
-    // Update user plan
-    user.subscriptionPlan = selectedPlan.name;
-    user.videoTimeLimit = selectedPlan.timeLimit;
-    await user.save();
-
-    // Setup nodemailer transporter
-    const transporter = nodemailer.createTransport({
-      service: 'gmail',
-      auth: {
-        user: process.env.EMAIL,
-        pass: process.env.EMAIL_PASSWORD
-      }
+    const newPlan = new Plan({
+      userId,
+      planName,
+      price,
+      duration,
+      endDate
     });
 
-    // Compose email
-    const mailOptions = {
-      from: process.env.EMAIL,
-      to: email,
-      subject: `Invoice for ${selectedPlan.name} Plan`,
-      text: `Thank you for purchasing the ${selectedPlan.name} plan.\n\nPlan: ${selectedPlan.name}\nTime Limit: ${selectedPlan.timeLimit === -1 ? 'Unlimited' : selectedPlan.timeLimit + ' minutes'}\nAmount Paid: ₹${selectedPlan.cost}`
-    };
+    await newPlan.save();
+    res.status(201).json({ message: 'Plan subscribed successfully', plan: newPlan });
+  } catch (error) {
+    console.error('❌ Error subscribing to plan:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
 
-    // Send email
-    await transporter.sendMail(mailOptions);
-
-    // Respond with success
-    return res.json({ message: 'Plan upgraded and invoice sent successfully.', user });
-
-  } catch (err) {
-    console.error('Upgrade Error:', err.message);
-    return res.status(500).json({ message: 'Server Error' });
+// Get all plans for a user
+router.get('/:userId', async (req, res) => {
+  try {
+    const plans = await Plan.find({ userId: req.params.userId });
+    res.json(plans);
+  } catch (error) {
+    console.error('❌ Error fetching plans:', error);
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
